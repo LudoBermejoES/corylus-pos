@@ -1,8 +1,23 @@
 use super::*;
 
 #[test]
-fn engine_new_heuristic_only() {
+fn engine_new_es_not_installed() {
+    // Spanish now has the AnCora model — starts NotInstalled, not heuristic-only.
     let cfg = EngineConfig::default_es(std::path::PathBuf::from("/tmp/test-pos"));
+    let engine = PosEngine::new(cfg);
+    assert_eq!(engine.state(), PosState::NotInstalled);
+    assert!(!engine.is_heuristic_only());
+}
+
+#[test]
+fn engine_new_heuristic_only_explicit() {
+    // A config with empty source_url is still heuristic-only (used in tests / future rule-based lang).
+    let cfg = EngineConfig {
+        data_dir: std::path::PathBuf::from("/tmp/test-pos-heuristic"),
+        lang: "es".into(),
+        source_url: String::new(),
+        source_sha256: String::new(),
+    };
     let engine = PosEngine::new(cfg);
     assert_eq!(engine.state(), PosState::Ready);
     assert!(engine.is_heuristic_only());

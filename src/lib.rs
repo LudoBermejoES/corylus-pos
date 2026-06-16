@@ -62,9 +62,8 @@ impl EngineConfig {
         Self {
             data_dir,
             lang: "es".into(),
-            // Heuristic-only until AnCora model is published (task 4.5).
-            source_url: String::new(),
-            source_sha256: String::new(),
+            source_url: "https://github.com/LudoBermejoES/corylus-pos/releases/download/v1.0.1/es.pos.tar.gz".into(),
+            source_sha256: "333b038739cc36af5208b3cda7afa4a50c130ecf4c506ba69c9dcefae7172254".into(),
         }
     }
 }

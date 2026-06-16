@@ -107,11 +107,17 @@ impl PerceptronTagger {
     ) -> HashMap<String, f64> {
         let mut f = HashMap::new();
 
+        // Feature keys use space as separator to match NLTK's weight file format:
+        // e.g. "i suffix ing", "i-1 tag+i word VBD running"
         macro_rules! add {
-            ($($parts:expr),+) => {
-                let key = [$($parts),+].join("+");
+            ($name:expr, $val:expr) => {
+                let key = format!("{} {}", $name, $val);
                 *f.entry(key).or_insert(0.0) += 1.0;
-            }
+            };
+            ($name:expr, $v1:expr, $v2:expr) => {
+                let key = format!("{} {} {}", $name, $v1, $v2);
+                *f.entry(key).or_insert(0.0) += 1.0;
+            };
         }
 
         let suf = |w: &str, n: usize| {
@@ -133,7 +139,7 @@ impl PerceptronTagger {
             if uidx >= tokens.len() { "-END-" } else { tokens[uidx].as_str() }
         };
 
-        add!("bias", "");
+        *f.entry("bias".to_string()).or_insert(0.0) += 1.0;
         add!("i suffix", &suf(word, 3));
         add!("i pref1", &pre(word, 1));
         add!("i-1 tag", prev);
