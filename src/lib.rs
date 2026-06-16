@@ -133,6 +133,10 @@ impl PosEngine {
         self.0.lock().unwrap().state.clone()
     }
 
+    pub fn data_dir(&self) -> PathBuf {
+        self.0.lock().unwrap().config.data_dir.clone()
+    }
+
     pub fn is_heuristic_only(&self) -> bool {
         self.0.lock().unwrap().config.source_url.is_empty()
     }
