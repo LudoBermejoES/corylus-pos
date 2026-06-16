@@ -151,15 +151,17 @@ async fn integration_en_install_tag_uninstall() {
     assert_eq!(engine.state(), PosState::NotInstalled);
 }
 
-/// Install the ES AnCora model, verify ADJ tagging on known Spanish sentences, then uninstall.
+/// Install the ES AnCora model, verify ADJ tagging across a broad set of Spanish
+/// sentences, then uninstall.
 ///
-/// Adjectives tested:
-///   "bonito" (JJ in NLTK-style / ADJ in UD) in "el coche bonito"
-///   "grande"  in "un gran problema"
-///   "rápido"  in "un coche rápido"
-///
-/// Adverb heuristic tested in parallel: "rápidamente" still fires is_adverb_heuristic
-/// regardless of model.
+/// Coverage:
+///   Post-nominal ADJ  — most common Spanish position; must not confuse with NOUN
+///   Pre-nominal ADJ   — apocope forms: gran, buen, mal
+///   Gender/number agreement — feliz (invariant), felices (plural)
+///   Predicate ADJ after ser/estar — "el cielo está azul", "la solución es perfecta"
+///   Attributive after determiner — "muy bueno"
+///   Ambiguous lemma — "libre"/"libres" depending on syntactic context
+///   Non-ADJ sanity check — adverbs and pronouns must not be tagged ADJ
 #[tokio::test]
 #[ignore]
 async fn integration_es_install_tag_uninstall() {
@@ -167,34 +169,109 @@ async fn integration_es_install_tag_uninstall() {
     let cfg = EngineConfig::default_es(dir.path().join("pos/es"));
     let engine = PosEngine::new(cfg);
     assert_eq!(engine.state(), PosState::NotInstalled);
-    assert!(!engine.is_heuristic_only(), "ES must NOT be heuristic-only once AnCora model is pinned");
+    assert!(!engine.is_heuristic_only(),
+        "ES must NOT be heuristic-only once AnCora model is pinned");
 
     engine.provision(|s| println!("ES progress: {:?}", s)).await
         .expect("ES model download failed");
     assert_eq!(engine.state(), PosState::Ready);
 
-    // "el coche bonito" → "bonito" (index 2) should be ADJ
-    let sents = vec![
+    // ── Post-nominal adjectives ───────────────────────────────────────────────
+    // These are the most common Spanish pattern: DET NOUN ADJ.
+    // A model that only learned prefix/suffix patterns would fail here because
+    // "bonito", "grande", "interesante", "inteligente" have no single shared
+    // suffix — the model must use left-context (NOUN tag at i-1).
+    let post_nominal = vec![
         vec!["el".to_string(), "coche".to_string(), "bonito".to_string()],
-        vec!["un".to_string(), "coche".to_string(), "rápido".to_string()],
-        vec!["ella".to_string(), "corre".to_string(), "rápidamente".to_string()],
+        vec!["la".to_string(), "casa".to_string(), "grande".to_string()],
+        vec!["un".to_string(), "libro".to_string(), "interesante".to_string()],
+        vec!["el".to_string(), "hombre".to_string(), "inteligente".to_string()],
     ];
-    let results = engine.tag_batch(&sents);
+    let r = engine.tag_batch(&post_nominal);
+    assert_eq!(r[0][2].upos, Some(Upos::Adj),
+        "\"bonito\" in DET NOUN __ should be ADJ");
+    assert_eq!(r[1][2].upos, Some(Upos::Adj),
+        "\"grande\" in DET NOUN __ should be ADJ");
+    assert_eq!(r[2][2].upos, Some(Upos::Adj),
+        "\"interesante\" in DET NOUN __ should be ADJ");
+    assert_eq!(r[3][2].upos, Some(Upos::Adj),
+        "\"inteligente\" in DET NOUN __ should be ADJ");
 
-    // "bonito" in "el coche bonito"
-    assert_eq!(results[0][2].upos, Some(Upos::Adj),
-        "\"bonito\" in \"el coche bonito\" should be ADJ, got {:?}", results[0][2].upos);
+    // ── Pre-nominal (apocope) adjectives ─────────────────────────────────────
+    // "gran", "buen", "mal" are shortened forms that appear before the noun.
+    // The model must tag them ADJ using right-context (NOUN at i+1).
+    let pre_nominal = vec![
+        vec!["gran".to_string(), "problema".to_string()],
+        vec!["buen".to_string(), "trabajo".to_string()],
+        vec!["mal".to_string(), "tiempo".to_string()],
+    ];
+    let r = engine.tag_batch(&pre_nominal);
+    assert_eq!(r[0][0].upos, Some(Upos::Adj), "\"gran\" before NOUN should be ADJ");
+    assert_eq!(r[1][0].upos, Some(Upos::Adj), "\"buen\" before NOUN should be ADJ");
+    assert_eq!(r[2][0].upos, Some(Upos::Adj), "\"mal\" before NOUN should be ADJ");
 
-    // "rápido" in "un coche rápido"
-    assert_eq!(results[1][2].upos, Some(Upos::Adj),
-        "\"rápido\" in \"un coche rápido\" should be ADJ, got {:?}", results[1][2].upos);
+    // ── Gender/number invariance ──────────────────────────────────────────────
+    // "feliz" is invariant for gender; "felices" is the plural form.
+    // Both must be tagged ADJ regardless of the noun's gender.
+    let agreement = vec![
+        vec!["la".to_string(), "niña".to_string(), "feliz".to_string()],
+        vec!["el".to_string(), "niño".to_string(), "feliz".to_string()],
+        vec!["las".to_string(), "niñas".to_string(), "felices".to_string()],
+    ];
+    let r = engine.tag_batch(&agreement);
+    assert_eq!(r[0][2].upos, Some(Upos::Adj), "\"feliz\" (fem.) should be ADJ");
+    assert_eq!(r[1][2].upos, Some(Upos::Adj), "\"feliz\" (masc.) should be ADJ");
+    assert_eq!(r[2][2].upos, Some(Upos::Adj), "\"felices\" (plural) should be ADJ");
 
-    // "rápidamente" — heuristic fires (no model needed) AND model agrees it's ADV
-    assert!(results[2][2].is_adverb_heuristic, "rápidamente should fire adverb heuristic");
-    assert_eq!(results[2][2].upos, Some(Upos::Adv),
-        "rápidamente should be ADV from model, got {:?}", results[2][2].upos);
+    // ── Predicate adjectives after ser/estar ─────────────────────────────────
+    // "azul" after "está" and "perfecta" after "es" must be ADJ, not NOUN.
+    // A shallow model might be fooled by the verb-gap.
+    let predicate = vec![
+        vec!["el".to_string(), "cielo".to_string(), "está".to_string(), "azul".to_string()],
+        vec!["la".to_string(), "solución".to_string(), "es".to_string(), "perfecta".to_string()],
+    ];
+    let r = engine.tag_batch(&predicate);
+    assert_eq!(r[0][3].upos, Some(Upos::Adj),
+        "\"azul\" after estar should be ADJ");
+    assert_eq!(r[1][3].upos, Some(Upos::Adj),
+        "\"perfecta\" after ser should be ADJ");
 
-    // Uninstall returns to NotInstalled
+    // ── Ambiguous: "libre"/"libres" ───────────────────────────────────────────
+    // In "tiempo libre" it is ADJ; in "somos libres" it is predicate ADJ.
+    // Contrast: in "en libertad" it would be NOUN (not tested here).
+    let ambiguous = vec![
+        vec!["tiempo".to_string(), "libre".to_string()],
+        vec!["somos".to_string(), "libres".to_string()],
+    ];
+    let r = engine.tag_batch(&ambiguous);
+    assert_eq!(r[0][1].upos, Some(Upos::Adj), "\"libre\" modifying NOUN should be ADJ");
+    assert_eq!(r[1][1].upos, Some(Upos::Adj), "\"libres\" after AUX should be ADJ");
+
+    // ── Adverb heuristic alongside model ─────────────────────────────────────
+    // "-mente" adverbs must fire the heuristic flag AND be tagged ADV by the model.
+    let adv_sents = vec![
+        vec!["ella".to_string(), "corre".to_string(), "rápidamente".to_string()],
+        vec!["él".to_string(), "habla".to_string(), "claramente".to_string()],
+    ];
+    let r = engine.tag_batch(&adv_sents);
+    assert!(r[0][2].is_adverb_heuristic, "rápidamente should fire adverb heuristic");
+    assert_eq!(r[0][2].upos, Some(Upos::Adv),
+        "rápidamente should be ADV from model");
+    assert!(r[1][2].is_adverb_heuristic, "claramente should fire adverb heuristic");
+    assert_eq!(r[1][2].upos, Some(Upos::Adv),
+        "claramente should be ADV from model");
+
+    // ── Non-ADJ sanity checks ─────────────────────────────────────────────────
+    // Words that must NOT be tagged ADJ: adverbs and pronouns.
+    let non_adj = vec![
+        vec!["ayer".to_string(), "llegué".to_string()],   // ayer = ADV
+        vec!["ellos".to_string(), "corren".to_string()],  // ellos = PRON
+    ];
+    let r = engine.tag_batch(&non_adj);
+    assert_ne!(r[0][0].upos, Some(Upos::Adj), "\"ayer\" must not be ADJ");
+    assert_ne!(r[1][0].upos, Some(Upos::Adj), "\"ellos\" must not be ADJ");
+
+    // ── Uninstall ─────────────────────────────────────────────────────────────
     engine.uninstall().expect("uninstall failed");
     assert_eq!(engine.state(), PosState::NotInstalled);
 }
