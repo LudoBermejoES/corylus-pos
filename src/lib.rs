@@ -53,9 +53,8 @@ impl EngineConfig {
         Self {
             data_dir,
             lang: "en".into(),
-            // Placeholder: filled in once the artifact is published (task 2.6).
-            source_url: String::new(),
-            source_sha256: String::new(),
+            source_url: "https://github.com/LudoBermejoES/corylus-pos/releases/download/v1.0.0/en.pos.tar.gz".into(),
+            source_sha256: "04187d38161327b3b6746d0c7c2ff3fc1275775d8b0d2537fe59f25e0692a2f7".into(),
         }
     }
 

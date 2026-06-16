@@ -1,1 +1,4 @@
-
+/target/
+*.pos.json
+*.pos.tar.gz
+*.pos.tar.gz.part
