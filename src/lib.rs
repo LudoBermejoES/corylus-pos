@@ -96,12 +96,10 @@ impl PosEngine {
             // Heuristics are always ready.
             PosState::Ready
         } else {
-            // Check if model is already installed on disk.
-            if state::is_installed_for(&config) {
-                PosState::NotInstalled // will be upgraded to Ready in set_data_dir
-            } else {
-                PosState::NotInstalled
-            }
+            // Model-backed: starts NotInstalled regardless of whether the model is
+            // already on disk — `set_data_dir` unconditionally probes and upgrades
+            // to Ready (via `try_load_model`) when it is.
+            PosState::NotInstalled
         };
         Self(Arc::new(Mutex::new(Inner {
             config,
@@ -180,7 +178,7 @@ impl PosEngine {
                     _ => (is_en_adverb(word), is_en_gerund(word)),
                 };
                 // Heuristic gerund/adverb flags take precedence when model absent.
-                let effective_upos = upos.or_else(|| {
+                let effective_upos = upos.or({
                     if is_adverb { Some(Upos::Adv) }
                     else { None }
                 });
@@ -189,7 +187,7 @@ impl PosEngine {
                     word: word.clone(),
                     upos: effective_upos,
                     is_adverb_heuristic: is_adverb,
-                    is_gerund: is_gerund,
+                    is_gerund,
                 }
             }).collect()
         }).collect()

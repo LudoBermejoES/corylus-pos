@@ -35,6 +35,39 @@ fn engine_new_en_not_installed() {
     assert_eq!(engine.state(), PosState::NotInstalled);
 }
 
+// Regression test: `new()` used to have a redundant
+// `if is_installed_for(&config) { NotInstalled } else { NotInstalled }` branch
+// (both arms identical) with a comment claiming set_data_dir would later
+// upgrade the state. That branch never distinguished any real behavior since
+// `new()` alone never calls `try_load_model` — only `set_data_dir` does. This
+// exercises the exact case the dead branch checked (model files already
+// present on disk at construction time) and confirms `new()` still reports
+// `NotInstalled` immediately afterward.
+#[test]
+fn engine_new_reports_not_installed_even_when_model_files_preexist_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = EngineConfig {
+        data_dir: dir.path().to_path_buf(),
+        lang: "en".into(),
+        source_url: "https://example.com/en.pos.tar.gz".into(),
+        source_sha256: "abc123".into(),
+    };
+    // Fabricate an "already installed" marker matching is_installed_for's checks.
+    std::fs::write(state::weights_path(&cfg), "{}").unwrap();
+    std::fs::write(
+        state::version_path(&cfg),
+        serde_json::to_string(&state::VersionFile {
+            lang: cfg.lang.clone(),
+            source_sha256: cfg.source_sha256.clone(),
+            schema_version: state::SCHEMA_VERSION,
+        }).unwrap(),
+    ).unwrap();
+    assert!(state::is_installed_for(&cfg), "fixture must satisfy is_installed_for");
+
+    let engine = PosEngine::new(cfg);
+    assert_eq!(engine.state(), PosState::NotInstalled);
+}
+
 #[test]
 fn tag_batch_adverb_heuristic_no_model() {
     let cfg = EngineConfig::default_en(std::path::PathBuf::from("/tmp/test-pos-en-h"));
