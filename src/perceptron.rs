@@ -51,18 +51,43 @@ impl PerceptronTagger {
         })
     }
 
-    /// Tag a sentence (list of lowercase tokens). Returns UPOS for each token.
-    pub fn tag(&self, tokens: &[String]) -> Vec<Upos> {
+    /// Tag a sentence of surface tokens. Returns UPOS for each token.
+    pub fn tag(&self, surface: &[String]) -> Vec<Upos> {
+        let es = self.lang == "es";
+        // The Spanish model was trained on lowercased AnCora forms, so a
+        // capitalised "Ella"/"La" is an unknown word to it unless lowercased.
+        // English (NLTK) weights are cased and take the surface form.
+        let lowered: Vec<String>;
+        let tokens: &[String] = if es {
+            lowered = surface.iter().map(|w| w.to_lowercase()).collect();
+            &lowered
+        } else {
+            surface
+        };
         let mut prev = "-START-".to_string();
         let mut prev2 = "-START2-".to_string();
         let mut out = Vec::with_capacity(tokens.len());
 
         for (i, word) in tokens.iter().enumerate() {
-            let tag = if let Some(t) = self.tags.get(word.as_str()) {
-                t.clone()
-            } else {
-                let features = self.get_features(i, word, tokens, &prev, &prev2);
-                self.predict(&features)
+            // AnCora splits "del"/"al" into "de el"/"a el", so the model never
+            // saw them: tag the preposition and give the next word the DET
+            // context it was trained with.
+            if es && (word == "del" || word == "al") {
+                out.push(Upos::Adp);
+                prev2 = "ADP".to_string();
+                prev = "DET".to_string();
+                continue;
+            }
+            // Lowercasing hid proper nouns ("Casa Blanca", "Miró") among common
+            // words in training; a lowercase word in running Spanish text is
+            // never a proper noun, so PROPN is ruled out for it.
+            let no_propn = es && surface[i].chars().next().is_some_and(|c| c.is_lowercase());
+            let tag = match self.tags.get(word.as_str()) {
+                Some(t) if !(no_propn && t == "PROPN") => t.clone(),
+                _ => {
+                    let features = self.get_features(i, word, tokens, &prev, &prev2);
+                    self.predict(&features, if no_propn { Some("PROPN") } else { None })
+                }
             };
             let upos = if self.lang == "en" {
                 Upos::from_ptb(&tag)
@@ -76,7 +101,7 @@ impl PerceptronTagger {
         out
     }
 
-    fn predict(&self, features: &HashMap<String, f64>) -> String {
+    fn predict(&self, features: &HashMap<String, f64>, exclude: Option<&str>) -> String {
         let mut scores: HashMap<&str, f64> = HashMap::new();
         for (feat, val) in features {
             if let Some(weights) = self.weights.get(feat.as_str()) {
@@ -87,6 +112,7 @@ impl PerceptronTagger {
         }
         self.classes
             .iter()
+            .filter(|c| Some(c.as_str()) != exclude)
             .max_by(|a, b| {
                 let sa = scores.get(a.as_str()).copied().unwrap_or(0.0);
                 let sb = scores.get(b.as_str()).copied().unwrap_or(0.0);
@@ -155,5 +181,63 @@ impl PerceptronTagger {
         add!("i+2 word", word_i(i as isize + 2));
 
         f
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tiny Spanish model shaped like the AnCora one: trained on lowercase
+    /// forms, with "casa" after a determiner leaning PROPN ("la Casa Blanca").
+    fn es_tagger() -> PerceptronTagger {
+        let json = r#"{
+            "tags": {"ella": "PRON", "la": "DET", "el": "DET", "miró": "PROPN"},
+            "weights": {
+                "bias": {"PROPN": 1.0},
+                "i-1 tag DET": {"NOUN": 2.0},
+                "i-1 tag+i word DET casa": {"PROPN": 5.0},
+                "i-1 tag NOUN": {"ADJ": 3.0},
+                "i-1 tag PROPN": {"PROPN": 4.0},
+                "i-1 tag PRON": {"VERB": 3.0},
+                "i word mar": {"NOUN": 3.0}
+            },
+            "classes": ["ADJ", "ADP", "DET", "NOUN", "PRON", "PROPN", "VERB"]
+        }"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("es.pos.json");
+        std::fs::write(&path, json).unwrap();
+        PerceptronTagger::load(&path, "es").unwrap()
+    }
+
+    fn words(s: &str) -> Vec<String> {
+        s.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn es_capitalised_sentence_start_is_looked_up_lowercase() {
+        // "Ella" used to miss the lowercase tag dictionary and come out PROPN.
+        let tags = es_tagger().tag(&words("Ella miró el mar"));
+        assert_eq!(tags, vec![Upos::Pron, Upos::Verb, Upos::Det, Upos::Noun]);
+    }
+
+    #[test]
+    fn es_lowercase_word_is_never_a_proper_noun() {
+        // "casa" leaned PROPN and dragged "blanca" to PROPN with it.
+        let tags = es_tagger().tag(&words("La casa blanca"));
+        assert_eq!(tags, vec![Upos::Det, Upos::Noun, Upos::Adj]);
+    }
+
+    #[test]
+    fn es_capitalised_name_can_still_be_a_proper_noun() {
+        let tags = es_tagger().tag(&words("Tomás"));
+        assert_eq!(tags, vec![Upos::Noun]); // PROPN maps to NOUN
+    }
+
+    #[test]
+    fn es_contractions_are_prepositions() {
+        let tags = es_tagger().tag(&words("la puerta del faro"));
+        assert_eq!(tags[2], Upos::Adp);
+        assert_eq!(tags[3], Upos::Noun, "word after \"del\" gets DET context");
     }
 }

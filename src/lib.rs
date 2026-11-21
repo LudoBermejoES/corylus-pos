@@ -177,11 +177,16 @@ impl PosEngine {
                     "es" => (is_es_adverb(word), is_es_gerund(word)),
                     _ => (is_en_adverb(word), is_en_gerund(word)),
                 };
-                // Heuristic gerund/adverb flags take precedence when model absent.
-                let effective_upos = upos.or({
-                    if is_adverb { Some(Upos::Adv) }
-                    else { None }
-                });
+                // The heuristic adverb fills in when the model is absent. In
+                // Spanish it also overrides the model: "-mente" and the listed
+                // adverbs are ADV, and a model ADJ there would show them as
+                // adjectives. English "-ly" has adjectives ("deadly"), so
+                // English keeps the model's tag.
+                let effective_upos = if is_adverb && (lang == "es" || upos.is_none()) {
+                    Some(Upos::Adv)
+                } else {
+                    upos
+                };
                 let _ = tagger; // suppress unused warning
                 TagResult {
                     word: word.clone(),

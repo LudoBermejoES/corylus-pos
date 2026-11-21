@@ -37,8 +37,23 @@ static ES_ADV_EXCEPTIONS: &[&str] = &[
     "umente", "lamente", "clemente", "elemento",
 ];
 
+// Common Spanish adverbs without the suffix (the spec's "known false
+// negatives"). Only words that are adverbs in nearly every use: "tarde",
+// "mañana", "bien", "mal", "solo" double as nouns/adjectives and are left to
+// the model.
+static ES_ADV_NON_SUFFIX: &[&str] = &[
+    "despacio", "deprisa", "nunca", "siempre", "jamás", "todavía", "aún",
+    "ya", "muy", "enseguida", "temprano", "pronto", "ayer", "hoy", "anoche",
+    "quizá", "quizás", "acaso", "también", "tampoco", "apenas", "casi",
+    "aquí", "allí", "ahí", "allá", "acá", "ahora", "entonces", "luego",
+    "después", "antes", "lejos", "cerca", "así", "adentro", "afuera",
+];
+
 pub fn is_es_adverb(word: &str) -> bool {
     let lower = word.to_lowercase();
+    if ES_ADV_NON_SUFFIX.contains(&lower.as_str()) {
+        return true;
+    }
     if lower.len() < 7 {
         return false;
     }
@@ -143,6 +158,17 @@ mod tests {
         assert!(is_es_adverb("rápidamente"));
         assert!(is_es_adverb("claramente"));
         assert!(is_es_adverb("felizmente"));
+    }
+
+    #[test]
+    fn es_adverb_without_suffix() {
+        // "Iba caminando despacio. Nunca volvía; siempre miraba el mar."
+        assert!(is_es_adverb("despacio"));
+        assert!(is_es_adverb("Nunca"));
+        assert!(is_es_adverb("siempre"));
+        // Noun/adjective homographs stay with the model.
+        assert!(!is_es_adverb("tarde"));
+        assert!(!is_es_adverb("mañana"));
     }
 
     #[test]

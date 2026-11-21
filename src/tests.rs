@@ -112,6 +112,23 @@ fn tag_batch_es_adverb_heuristic() {
 }
 
 #[test]
+fn tag_batch_es_heuristic_adverbs_are_adv() {
+    // "Iba caminando despacio, nunca miraba atrás." — non-suffix adverbs used
+    // to get no adverb flag at all, so statistics counted none of them.
+    let cfg = EngineConfig { source_url: String::new(), source_sha256: String::new(),
+        ..EngineConfig::default_es(std::path::PathBuf::from("/tmp/test-pos-es-a")) };
+    let engine = PosEngine::new(cfg);
+    let sent: Vec<String> = "Iba caminando despacio nunca miraba atrás tranquilamente"
+        .split_whitespace().map(String::from).collect();
+    let r = &engine.tag_batch(&[sent])[0];
+    for i in [2, 3, 6] {
+        assert!(r[i].is_adverb_heuristic, "{} should be an adverb", r[i].word);
+        assert_eq!(r[i].upos, Some(Upos::Adv), "{} should be ADV", r[i].word);
+    }
+    assert!(!r[0].is_adverb_heuristic);
+}
+
+#[test]
 fn tag_batch_es_gerund_heuristic() {
     let cfg = EngineConfig::default_es(std::path::PathBuf::from("/tmp/test-pos-es-g"));
     let engine = PosEngine::new(cfg);
@@ -307,4 +324,39 @@ async fn integration_es_install_tag_uninstall() {
     // ── Uninstall ─────────────────────────────────────────────────────────────
     engine.uninstall().expect("uninstall failed");
     assert_eq!(engine.state(), PosState::NotInstalled);
+}
+
+/// The Spanish demo note "El faro (borrador)", tagged with the real AnCora
+/// model as the editor sends it (surface case, punctuation stripped).
+#[tokio::test]
+#[ignore]
+async fn integration_es_demo_sentences() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = PosEngine::new(EngineConfig::default_es(dir.path().join("pos/es")));
+    engine.provision(|_| {}).await.expect("ES model download failed");
+
+    let sent = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+    let r = engine.tag_batch(&[
+        sent("Ella subió la escalera"),
+        sent("Ella abrió la puerta del faro"),
+        sent("Ella miró el mar durante un rato"),
+        sent("La casa blanca estaba vacía"),
+        sent("El muelle viejo crujía bajo sus pies"),
+        sent("La luz amarilla giraba sobre el agua"),
+        sent("Iba caminando despacio pensando en su padre"),
+    ]);
+    // Pro-drop: sentence-initial "Ella" is PRON followed by a verb.
+    for s in &r[0..3] {
+        assert_eq!(s[0].upos, Some(Upos::Pron), "{:?}", s);
+        assert_eq!(s[1].upos, Some(Upos::Verb), "{:?}", s);
+    }
+    assert_eq!(r[1][4].upos, Some(Upos::Adp), "del");
+    assert_eq!(r[1][5].upos, Some(Upos::Noun), "faro");
+    // Adjective position: DET NOUN ADJ.
+    for s in &r[3..6] {
+        let t: Vec<_> = s[..3].iter().map(|t| t.upos).collect();
+        assert_eq!(t, vec![Some(Upos::Det), Some(Upos::Noun), Some(Upos::Adj)], "{:?}", s);
+    }
+    assert_eq!(r[6][0].upos, Some(Upos::Verb), "Iba");
+    assert_eq!(r[6][2].upos, Some(Upos::Adv), "despacio");
 }
